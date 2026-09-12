@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
@@ -8,8 +8,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- 引入 Supabase JS SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
- <link rel="apple-touch-icon" href="/check-in/icon-192x192.png">
-<link rel="icon" href="/check-in/icon-192x192.png" type="image/png">
+  <link rel="apple-touch-icon" href="/check-in/icon-192x192.png">
+  <link rel="icon" href="/check-in/icon-192x192.png" type="image/png">
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen">
 
@@ -39,10 +39,33 @@
   </div>
 
 <script>
-    // ===== 填入你的 Supabase 專案資訊 =====
+    // ===== 1. 填入你的 Supabase 專案資訊 =====
     const SUPABASE_URL = 'https://klgubwkrkoeqnndowijj.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_zgTOZmoPRNhgm1ZFBdnD0w_GpqpLT0D'; 
     const sbSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // ===== 2. 設定店家座標與限制距離 (請換成你們店家的真實經緯度) =====
+    const STORE_LOCATION = {
+        lat: 25.001661, // 💡 請改成店家的「緯度」
+        lng: 121.509723  // 💡 請改成店家的「經度」
+    };
+    const MAX_DISTANCE = 80; // 限制距離（公尺）
+
+    // ===== 3. 計算兩點距離的數學公式 =====
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371e3; 
+        const φ1 = lat1 * Math.PI / 180;
+        const φ2 = lat2 * Math.PI / 180;
+        const Δφ = (lat2 - lat1) * Math.PI / 180;
+        const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+        const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                  Math.cos(φ1) * Math.cos(φ2) *
+                  Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+        return R * c; 
+    }
 
     async function handlePunch(type) {
       const pin = document.getElementById('pinInput').value.trim();
@@ -54,11 +77,38 @@
         return;
       }
 
-      msgDiv.textContent = '驗證中...';
+      msgDiv.textContent = '正在確認您的 GPS 位置與打卡權限...';
       msgDiv.className = 'mt-6 text-center text-sm font-medium text-gray-500';
 
       try {
-        // 1. 根據 PIN 碼去 employees 找尋員工名字
+        // 4. 取得手機當前 GPS 座標
+        const position = await new Promise((resolve, reject) => {
+            if (!navigator.geolocation) {
+                reject(new Error('您的瀏覽器不支援地理定位功能。'));
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 0
+            });
+        });
+
+        const userLat = position.coords.latitude;
+        const userLng = position.coords.longitude;
+
+        // 5. 計算與店家的距離
+        const distance = calculateDistance(userLat, userLng, STORE_LOCATION.lat, STORE_LOCATION.lng);
+        console.log(`目前距離店面: ${Math.round(distance)} 公尺`);
+
+        // 6. 檢查是否超出 50 公尺範圍
+        if (distance > MAX_DISTANCE) {
+            throw new Error(`打卡失敗！您目前距離店面約 ${Math.round(distance)} 公尺，須在 ${MAX_DISTANCE} 公尺內才能打卡。`);
+        }
+
+        msgDiv.textContent = '驗證員工身分中...';
+
+        // 7. 根據 PIN 碼去 employees 找尋員工名字
         const { data: employee, error: empError } = await sbSupabase
           .from('employees')
           .select('name')
@@ -69,7 +119,7 @@
           throw new Error('找不到此 PIN 碼對應的員工，請確認是否輸入正確。');
         }
 
-        // 2. 將打卡紀錄寫入 punch_logs 資料表（對應真實欄位）
+        // 8. 將打卡紀錄寫入 punch_logs 資料表
         const { error: punchError } = await sbSupabase
           .from('punch_logs')
           .insert([
@@ -86,7 +136,13 @@
         document.getElementById('pinInput').value = '';
 
       } catch (err) {
-        msgDiv.textContent = err.message;
+        // 處理 GPS 錯誤或業務邏輯錯誤
+        let errorMsg = err.message;
+        if (err.code === 1) errorMsg = '您拒絕了定位權限，請至手機設定允許瀏覽器存取位置。';
+        if (err.code === 2) errorMsg = '無法取得您的位置，請確認手機 GPS 是否開啟。';
+        if (err.code === 3) errorMsg = '取得定位逾時，請至收訊良好的地方再試一次。';
+
+        msgDiv.textContent = errorMsg;
         msgDiv.className = 'mt-6 text-center text-sm font-medium text-red-500';
       }
     }
