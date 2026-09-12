@@ -18,6 +18,15 @@
     
     <!-- 打卡表單 -->
     <div class="space-y-4">
+      <!-- 1. 新增：員工姓名下拉選單 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">請選擇您的姓名</label>
+        <select id="employeeSelect" 
+          class="w-full px-4 py-3 border border-gray-300 rounded-xl text-center text-lg bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+          <option value="">載入員工名單中...</option>
+        </select>
+      </div>
+
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">請輸入 4 位數 PIN 碼</label>
         <input type="password" id="pinInput" maxlength="4" placeholder="例如: 0305" 
@@ -46,12 +55,38 @@
 
     // ===== 2. 設定店家座標與限制距離 (請換成你們店家的真實經緯度) =====
     const STORE_LOCATION = {
-        lat: 25.001661, // 💡 請改成店家的「緯度」
-        lng: 121.509723  // 💡 請改成店家的「經度」
+        lat: 25.033000, 
+        lng: 121.565400  
     };
-    const MAX_DISTANCE = 70; // 限制距離（公尺）
+    const MAX_DISTANCE = 75; // 限制距離（公尺）
 
-    // ===== 3. 計算兩點距離的數學公式 =====
+    // ===== 3. 網頁載入時，自動抓取 employees 填入下拉選單 =====
+    async function loadEmployees() {
+        const selectElement = document.getElementById('employeeSelect');
+        try {
+            const { data: employees, error } = await sbSupabase
+                .from('employees')
+                .select('name')
+                .order('name', { ascending: true }); // 依姓名排序
+
+            if (error) throw error;
+
+            selectElement.innerHTML = '<option value="">-- 請點擊選擇姓名 --</option>';
+            employees.forEach(emp => {
+                const option = document.createElement('option');
+                option.value = emp.name;
+                option.textContent = emp.name;
+                selectElement.appendChild(option);
+            });
+        } catch (err) {
+            console.error('載入員工名單失敗：', err);
+            selectElement.innerHTML = '<option value="">載入失敗，請重新整理網頁</option>';
+        }
+    }
+
+    window.addEventListener('DOMContentLoaded', loadEmployees);
+
+    // ===== 4. 計算兩點距離的數學公式 =====
     function calculateDistance(lat1, lon1, lat2, lon2) {
         const R = 6371e3; 
         const φ1 = lat1 * Math.PI / 180;
@@ -68,9 +103,18 @@
     }
 
     async function handlePunch(type) {
+      const selectedName = document.getElementById('employeeSelect').value;
       const pin = document.getElementById('pinInput').value.trim();
       const msgDiv = document.getElementById('message');
 
+      // 檢查是否選擇姓名
+      if (!selectedName) {
+        msgDiv.textContent = '請先選擇您的姓名！';
+        msgDiv.className = 'mt-6 text-center text-sm font-medium text-red-500';
+        return;
+      }
+
+      // 檢查 PIN 碼長度
       if (pin.length !== 4) {
         msgDiv.textContent = '請輸入正確的 4 位數 PIN 碼！';
         msgDiv.className = 'mt-6 text-center text-sm font-medium text-red-500';
@@ -81,7 +125,7 @@
       msgDiv.className = 'mt-6 text-center text-sm font-medium text-gray-500';
 
       try {
-        // 4. 取得手機當前 GPS 座標
+        // 5. 取得手機當前 GPS 座標
         const position = await new Promise((resolve, reject) => {
             if (!navigator.geolocation) {
                 reject(new Error('您的瀏覽器不支援地理定位功能。'));
@@ -97,29 +141,30 @@
         const userLat = position.coords.latitude;
         const userLng = position.coords.longitude;
 
-        // 5. 計算與店家的距離
-        const distance = calculateDistance(userLat, userLng, STORE_LOCATION.lat, STORE_LOCATION.lng);
+        // 6. 計算與店家的距離
+        const distance = calculateDistance(userLat, userLng, STORE_LOCATION.lat, STORE_Location = STORE_LOCATION.lng);
         console.log(`目前距離店面: ${Math.round(distance)} 公尺`);
 
-        // 6. 檢查是否超出 50 公尺範圍
+        // 7. 檢查是否超出 50 公尺範圍
         if (distance > MAX_DISTANCE) {
             throw new Error(`打卡失敗！您目前距離店面約 ${Math.round(distance)} 公尺，須在 ${MAX_DISTANCE} 公尺內才能打卡。`);
         }
 
         msgDiv.textContent = '驗證員工身分中...';
 
-        // 7. 根據 PIN 碼去 employees 找尋員工名字
+        // 8. 驗證選擇的名字與 PIN 碼是否正確相符
         const { data: employee, error: empError } = await sbSupabase
           .from('employees')
           .select('name')
+          .eq('name', selectedName)
           .eq('pin_code', pin)
           .single();
 
         if (empError || !employee) {
-          throw new Error('找不到此 PIN 碼對應的員工，請確認是否輸入正確。');
+          throw new Error('PIN 碼錯誤，請確認輸入的密碼是否正確。');
         }
 
-        // 8. 將打卡紀錄寫入 punch_logs 資料表
+        // 9. 將打卡紀錄寫入 punch_logs 資料表
         const { error: punchError } = await sbSupabase
           .from('punch_logs')
           .insert([
@@ -134,9 +179,9 @@
         msgDiv.textContent = `🎉 ${employee.name} - ${type}打卡成功！`;
         msgDiv.className = 'mt-6 text-center text-sm font-medium text-green-600';
         document.getElementById('pinInput').value = '';
+        document.getElementById('employeeSelect').value = ''; // 重設下拉選單
 
       } catch (err) {
-        // 處理 GPS 錯誤或業務邏輯錯誤
         let errorMsg = err.message;
         if (err.code === 1) errorMsg = '您拒絕了定位權限，請至手機設定允許瀏覽器存取位置。';
         if (err.code === 2) errorMsg = '無法取得您的位置，請確認手機 GPS 是否開啟。';
