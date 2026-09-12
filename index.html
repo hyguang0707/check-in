@@ -88,10 +88,10 @@
         msgDiv.className = 'mt-6 text-center text-sm font-medium text-red-500';
       }
     }
-  </script>
+
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js')
+      /navigator.serviceWorker.register('/check-in/sw.js')
         .then((reg) => {
           console.log('Service Worker 註冊成功:', reg.scope);
         })
