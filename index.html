@@ -93,7 +93,7 @@
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      /navigator.serviceWorker.register('/check-in/sw.js')
+      navigator.serviceWorker.register('/check-in/sw.js')
         .then((reg) => {
           console.log('Service Worker 註冊成功:', reg.scope);
         })
