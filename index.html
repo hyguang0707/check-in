@@ -105,13 +105,13 @@
         <button onclick="closeCalendarModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl font-bold px-2">&times;</button>
       </div>
       <div class="text-xs text-gray-500 dark:text-gray-400 mb-4">
-        提示：無打卡紀錄的日子（如休假日或未上班）將保持空白，讓出勤狀態更清晰。
+        提示：未打卡（休假日）或未來日期將保持空白，讓出勤狀態更清晰。
       </div>
       <!-- 月曆介面 -->
       <div class="bg-gray-50 dark:bg-gray-900 p-4 rounded-2xl">
         <div class="flex justify-between items-center mb-3 font-bold text-gray-700 dark:text-gray-200">
-          <span id="currentMonthLabel">2026年 9月</span>
-          <span class="text-xs bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300 px-2.5 py-1 rounded-full">正常出勤率 95%</span>
+          <span id="currentMonthLabel">載入中...</span>
+          <span class="text-xs bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300 px-2.5 py-1 rounded-full">雲端即時同步</span>
         </div>
         <!-- 星期標題 -->
         <div class="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-gray-400 mb-2">
@@ -125,7 +125,7 @@
       <div class="flex gap-2 mt-4 text-xs text-gray-500 dark:text-gray-400 justify-center">
         <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span> 準時上班</span>
         <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block"></span> 遲到</span>
-        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span> 缺卡/異常</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span> 異常/缺卡</span>
       </div>
       <div class="mt-5 text-right">
         <button onclick="closeCalendarModal()" class="bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 text-gray-800 dark:text-white px-5 py-2 rounded-xl text-sm font-bold transition">關閉</button>
@@ -231,17 +231,25 @@
       }, 3500);
     }
 
-    // ===== Modal 控制函式 =====
-    function openCalendarModal() {
+    // ===== Modal 控制函式 (已修改為非同步) =====
+    async function openCalendarModal() {
       const selectedName = document.getElementById('employeeSelect').value;
       if (!selectedName) {
         showToast('請先在畫面上選擇您的姓名！', 'error');
         return;
       }
+      
       document.getElementById('calendarModalTitle').textContent = `📅 ${selectedName} 的出勤月曆`;
-      generateCalendar();
       document.getElementById('calendarModal').classList.remove('hidden');
+      
+      // 顯示讀取中提示
+      const grid = document.getElementById('calendarGrid');
+      grid.innerHTML = '<div class="col-span-7 py-6 text-center text-gray-500 font-bold">正在從雲端讀取出勤紀錄...</div>';
+
+      // 呼叫抓取雲端資料與生成月曆的函式
+      await generateCalendar(selectedName);
     }
+
     function closeCalendarModal() {
       document.getElementById('calendarModal').classList.add('hidden');
     }
@@ -254,16 +262,15 @@
       }
       document.getElementById('applyNameDisplay').value = selectedName;
       document.getElementById('applyDate').valueAsDate = new Date();
-      document.getElementById('applyModal').classList.add('hidden');
+      document.getElementById('applyModal').classList.remove('hidden');
     }
     function closeApplyModal() {
       document.getElementById('applyModal').classList.add('hidden');
     }
 
-    // 產生月曆格子（無打卡紀錄／休假則不顯示任何顏色點）
-    function generateCalendar() {
+    // 產生真實雲端資料月曆
+    async function generateCalendar(employeeName) {
       const grid = document.getElementById('calendarGrid');
-      grid.innerHTML = '';
       
       const now = new Date();
       const currentYear = now.getFullYear();
@@ -272,53 +279,110 @@
 
       document.getElementById('currentMonthLabel').textContent = `${currentYear}年 ${currentMonth + 1}月`;
 
-      // 假設本月從星期二開始（前面留 1 個空格）
-      for (let i = 0; i < 1; i++) {
+      // 1. 定義當月的開始與結束時間 (ISO 格式) 用於資料庫查詢
+      const firstDayOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
+      const firstDayOfNextMonth = new Date(currentYear, currentMonth + 1, 1).toISOString();
+
+      // 2. 向 Supabase 查詢該員工當月的所有打卡紀錄
+      const { data: logs, error } = await sbSupabase
+        .from('punch_logs')
+        .select('created_at, action_type')
+        .eq('employee_name', employeeName)
+        .gte('created_at', firstDayOfMonth)
+        .lt('created_at', firstDayOfNextMonth);
+
+      if (error) {
+        console.error('抓取資料失敗:', error);
+        grid.innerHTML = '<div class="col-span-7 py-4 text-center text-red-500">資料讀取失敗，請稍後再試</div>';
+        return;
+      }
+
+      // 3. 整理打卡紀錄：找出每一天「最早的上班時間」與「最晚的下班時間」
+      const attendanceData = {};
+      logs.forEach(log => {
+        const logDate = new Date(log.created_at);
+        const day = logDate.getDate(); // 取得是幾號
+
+        if (!attendanceData[day]) {
+          attendanceData[day] = { inTime: null, outTime: null };
+        }
+
+        if (log.action_type === '上班') {
+          if (!attendanceData[day].inTime || logDate < attendanceData[day].inTime) {
+            attendanceData[day].inTime = logDate;
+          }
+        } else if (log.action_type === '下班') {
+          if (!attendanceData[day].outTime || logDate > attendanceData[day].outTime) {
+            attendanceData[day].outTime = logDate;
+          }
+        }
+      });
+
+      // 4. 判斷每日燈號 (綠、黃、紅)
+      // 💡 上班時間設定：預設 09:00，可依需求調整
+      const SHIFT_START_HOUR = 9;   
+      const SHIFT_START_MINUTE = 0; 
+      
+      const finalStatus = {};
+      
+      for (const day in attendanceData) {
+        const record = attendanceData[day];
+        
+        if (record.inTime) {
+          const h = record.inTime.getHours();
+          const m = record.inTime.getMinutes();
+          
+          // 超過 09:00 算遲到 (黃燈)
+          if (h > SHIFT_START_HOUR || (h === SHIFT_START_HOUR && m > SHIFT_START_MINUTE)) {
+            finalStatus[day] = 'yellow'; 
+          } else {
+            finalStatus[day] = 'green';  
+          }
+        } else if (record.outTime && !record.inTime) {
+          // 只有下班打卡，沒有上班打卡 (異常紅燈)
+          finalStatus[day] = 'red'; 
+        }
+      }
+
+      // 5. 開始渲染月曆 UI
+      grid.innerHTML = '';
+      
+      // 計算這個月第一天是星期幾，來補前面的空白格子 (0是星期日)
+      const firstDayOfWeek = new Date(currentYear, currentMonth, 1).getDay();
+      for (let i = 0; i < firstDayOfWeek; i++) {
         grid.appendChild(document.createElement('div'));
       }
 
-      // 模擬該員工的「實際打卡紀錄資料」（未來可替換成從 Supabase punch_logs 撈出的資料）
-      // 格式範例：{'1': 'green', '2': 'green', '5': 'yellow', '13': 'green'}
-      // 沒被記錄到的日期（例如 7號、14號或週末休假）就不會出現點
-      const mockAttendanceRecords = {
-        1: 'green', 2: 'green', 3: 'green', 4: 'green', 
-        5: 'yellow', // 5號遲到
-        6: 'green', 8: 'green', 9: 'green', 10: 'green', 
-        11: 'green', 
-        12: 'yellow', // 12號遲到
-        13: 'green'  // 今天有打卡
-      };
+      // 計算這個月總共有幾天
+      const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
 
-      // 假設當月共 30 天
-      for (let day = 1; day <= 30; day++) {
+      // 生成每一天的格子
+      for (let day = 1; day <= daysInMonth; day++) {
         const cell = document.createElement('div');
         cell.className = 'py-2 rounded-xl flex flex-col items-center justify-center font-bold text-xs relative ';
         
         let statusHtml = '';
 
-        // 判斷是否為未來日期或今天以前
+        // 判斷條件：
+        // 1. 若為未來日期 (day > todayDate) -> 保持空白，不加顏色點
+        // 2. 若為過去或今天，但沒有打卡紀錄 (finalStatus[day] 不存在) -> 保持空白，代表休假或未上班
         if (day > todayDate) {
-          // 未來日期：保持空白
-          cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-400', 'opacity-65');
+          cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-400', 'opacity-60');
           statusHtml = `<span class="text-[9px] text-transparent mt-1">-</span>`;
         } else {
-          // 過去或今天的日期：檢查是否有打卡紀錄
-          const recordType = mockAttendanceRecords[day];
+          const status = finalStatus[day];
 
-          if (recordType === 'green') {
-            // 準時上班
+          if (status === 'green') {
             cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
             statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-green-500 mt-1" title="準時上班"></span>`;
-          } else if (recordType === 'yellow') {
-            // 遲到
+          } else if (status === 'yellow') {
             cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
             statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1" title="遲到"></span>`;
-          } else if (recordType === 'red') {
-            // 缺卡／異常
+          } else if (status === 'red') {
             cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
-            statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-red-400 mt-1" title="缺卡"></span>`;
+            statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-red-400 mt-1" title="異常/缺卡"></span>`;
           } else {
-            // 沒有打卡紀錄（代表當天放假或未上班，不加顏色點）
+            // 沒有打卡紀錄（代表當天放假或未上班），完全保持乾淨空白
             cell.classList.add('bg-gray-50', 'dark:bg-gray-800/60', 'text-gray-400', 'dark:text-gray-500');
             statusHtml = `<span class="text-[9px] text-transparent mt-1">-</span>`;
           }
@@ -401,7 +465,7 @@
 
         const distance = calculateDistance(position.coords.latitude, position.coords.longitude, STORE_LOCATION.lat, STORE_LOCATION.lng);
         if (distance > MAX_DISTANCE) {
-            throw new Error(`打卡失敗！不要偷偷亂來！距離店面約 ${Math.round(distance)} 公尺（須在可以心電感應的範圍內）。`);
+            throw new Error(`打卡失敗！距離店面約 ${Math.round(distance)} 公尺（須在心電感應的範圍內）。`);
         }
 
         const { data: employee, error: empError } = await sbSupabase
