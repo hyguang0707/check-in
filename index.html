@@ -105,7 +105,7 @@
         <button onclick="closeCalendarModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl font-bold px-2">&times;</button>
       </div>
       <div class="text-xs text-gray-500 dark:text-gray-400 mb-4">
-        提示：將自動顯示當月每日出勤狀態，未到或未來日期不會顯示顏色點。
+        提示：無打卡紀錄的日子（如休假日或未上班）將保持空白，讓出勤狀態更清晰。
       </div>
       <!-- 月曆介面 -->
       <div class="bg-gray-50 dark:bg-gray-900 p-4 rounded-2xl">
@@ -123,9 +123,9 @@
         </div>
       </div>
       <div class="flex gap-2 mt-4 text-xs text-gray-500 dark:text-gray-400 justify-center">
-        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span> 準時</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span> 準時上班</span>
         <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block"></span> 遲到</span>
-        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span> 缺卡/請假</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span> 缺卡/異常</span>
       </div>
       <div class="mt-5 text-right">
         <button onclick="closeCalendarModal()" class="bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 text-gray-800 dark:text-white px-5 py-2 rounded-xl text-sm font-bold transition">關閉</button>
@@ -254,13 +254,13 @@
       }
       document.getElementById('applyNameDisplay').value = selectedName;
       document.getElementById('applyDate').valueAsDate = new Date();
-      document.getElementById('applyModal').classList.remove('hidden');
+      document.getElementById('applyModal').classList.add('hidden');
     }
     function closeApplyModal() {
       document.getElementById('applyModal').classList.add('hidden');
     }
 
-    // 產生月曆格子（已加入過濾：未來日期不顯示打卡狀態點）
+    // 產生月曆格子（無打卡紀錄／休假則不顯示任何顏色點）
     function generateCalendar() {
       const grid = document.getElementById('calendarGrid');
       grid.innerHTML = '';
@@ -277,6 +277,18 @@
         grid.appendChild(document.createElement('div'));
       }
 
+      // 模擬該員工的「實際打卡紀錄資料」（未來可替換成從 Supabase punch_logs 撈出的資料）
+      // 格式範例：{'1': 'green', '2': 'green', '5': 'yellow', '13': 'green'}
+      // 沒被記錄到的日期（例如 7號、14號或週末休假）就不會出現點
+      const mockAttendanceRecords = {
+        1: 'green', 2: 'green', 3: 'green', 4: 'green', 
+        5: 'yellow', // 5號遲到
+        6: 'green', 8: 'green', 9: 'green', 10: 'green', 
+        11: 'green', 
+        12: 'yellow', // 12號遲到
+        13: 'green'  // 今天有打卡
+      };
+
       // 假設當月共 30 天
       for (let day = 1; day <= 30; day++) {
         const cell = document.createElement('div');
@@ -284,24 +296,31 @@
         
         let statusHtml = '';
 
-        // 判斷是否為「未來日期」或「今天以前」
+        // 判斷是否為未來日期或今天以前
         if (day > todayDate) {
-          // 未來日期：不加顏色點，保持空白乾淨
-          cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-400', 'opacity-60');
+          // 未來日期：保持空白
+          cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-400', 'opacity-65');
           statusHtml = `<span class="text-[9px] text-transparent mt-1">-</span>`;
         } else {
-          // 過去或今天的日期：計算出勤狀態
-          let dotColor = 'bg-green-500'; // 預設準時
-          if (day === 5 || day === 12) dotColor = 'bg-amber-400'; // 模擬遲到
-          if (day === 18) dotColor = 'bg-red-400'; // 模擬缺卡
+          // 過去或今天的日期：檢查是否有打卡紀錄
+          const recordType = mockAttendanceRecords[day];
 
-          // 模擬固定週休（例如大於13號之後的每週六日或特定休假日）
-          if (day > 13 && day % 6 === 0) {
-            cell.classList.add('bg-gray-100', 'dark:bg-gray-800', 'text-gray-400');
-            statusHtml = `<span class="text-[9px] text-gray-400 mt-1">休</span>`;
-          } else {
+          if (recordType === 'green') {
+            // 準時上班
             cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
-            statusHtml = `<span class="w-1.5 h-1.5 rounded-full ${dotColor} mt-1"></span>`;
+            statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-green-500 mt-1" title="準時上班"></span>`;
+          } else if (recordType === 'yellow') {
+            // 遲到
+            cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
+            statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1" title="遲到"></span>`;
+          } else if (recordType === 'red') {
+            // 缺卡／異常
+            cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
+            statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-red-400 mt-1" title="缺卡"></span>`;
+          } else {
+            // 沒有打卡紀錄（代表當天放假或未上班，不加顏色點）
+            cell.classList.add('bg-gray-50', 'dark:bg-gray-800/60', 'text-gray-400', 'dark:text-gray-500');
+            statusHtml = `<span class="text-[9px] text-transparent mt-1">-</span>`;
           }
         }
 
@@ -401,7 +420,7 @@
         let errorMsg = err.message;
         if (err.code === 1) errorMsg = '您拒絕了定位權限。';
         if (err.code === 2) errorMsg = '無法取得位置，請確認 GPS 開啟。';
-        if (err.code === 3) errorMsg, errorMsg = '取得定位逾時。';
+        if (err.code === 3) errorMsg = '取得定位逾時。';
         showToast(errorMsg, 'error');
       }
     }
