@@ -69,7 +69,7 @@
 
       <div>
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">請輸入 4 位數 PIN 碼</label>
-        <input type="password" id="pinInput" maxlength="4" placeholder="例如: 0305" 
+        <input type="password" id="pinInput" maxlength="4" placeholder="例如: 0520" 
           class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl text-center text-2xl tracking-widest bg-white dark:bg-gray-700 text-gray-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors">
       </div>
 
@@ -401,7 +401,7 @@
 
         const distance = calculateDistance(position.coords.latitude, position.coords.longitude, STORE_LOCATION.lat, STORE_LOCATION.lng);
         if (distance > MAX_DISTANCE) {
-            throw new Error(`打卡失敗！距離店面約 ${Math.round(distance)} 公尺（須在 ${MAX_DISTANCE} 公尺內）。`);
+            throw new Error(`打卡失敗！不要偷偷亂來！距離店面約 ${Math.round(distance)} 公尺（須在可以心電感應的範圍內）。`);
         }
 
         const { data: employee, error: empError } = await sbSupabase
