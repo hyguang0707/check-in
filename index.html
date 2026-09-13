@@ -4,56 +4,160 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>員工打卡系統</title>
-  <!-- 引入 Tailwind CSS 讓介面好看又現代 -->
+  <!-- 引入 Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 啟用 Tailwind 黑暗模式支援 -->
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+    }
+  </script>
   <!-- 引入 Supabase JS SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="apple-touch-icon" href="/check-in/icon-192x192.png">
   <link rel="icon" href="/check-in/icon-192x192.png" type="image/png">
+  <style>
+    /* Toast 彈出動畫 */
+    @keyframes slideDown {
+      from { transform: translateY(-20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .toast-animate {
+      animation: slideDown 0.3s ease-out forwards;
+    }
+  </style>
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+<body class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center min-h-screen transition-colors duration-300">
 
-  <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-md mx-4">
-    <h1 class="text-2xl font-bold text-center text-gray-800 mb-6">員工打卡系統</h1>
+  <!-- Toast 訊息提示容器 -->
+  <div id="toastContainer" class="fixed top-5 left-1/2 transform -translate-x-1/2 z-50 w-11/max-w-md pointer-events-none"></div>
+
+  <div class="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl w-full max-w-md mx-4 transition-colors duration-300 relative">
+    
+    <!-- 右上角：深色模式切換按鈕 -->
+    <button onclick="toggleDarkMode()" class="absolute top-6 right-6 p-2 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-yellow-400 hover:scale-110 transition-transform shadow-sm" title="切換深色模式">
+      <svg id="themeIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <!-- 預設太陽圖示 -->
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+      </svg>
+    </button>
+
+    <!-- 頂部：極簡大時鐘儀表板 -->
+    <div class="text-center mb-6 pt-2">
+      <div id="liveClock" class="text-3xl font-black tracking-wider text-gray-800 dark:text-gray-100 mb-1">00:00:00</div>
+      <div id="liveDate" class="text-xs font-medium text-gray-400 dark:text-gray-500">載入日期中...</div>
+    </div>
+
+    <h1 class="text-xl font-bold text-center text-gray-800 dark:text-white mb-6">員工打卡系統</h1>
     
     <!-- 打卡表單 -->
     <div class="space-y-4">
-      <!-- 1. 新增：員工姓名下拉選單 -->
+      <!-- 員工姓名下拉選單 -->
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">請選擇您的姓名</label>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">請選擇您的姓名</label>
         <select id="employeeSelect" 
-          class="w-full px-4 py-3 border border-gray-300 rounded-xl text-center text-lg bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+          class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl text-center text-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors">
           <option value="">載入員工名單中...</option>
         </select>
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">請輸入 4 位數 PIN 碼</label>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">請輸入 4 位數 PIN 碼</label>
         <input type="password" id="pinInput" maxlength="4" placeholder="例如: 0305" 
-          class="w-full px-4 py-3 border border-gray-300 rounded-xl text-center text-2xl tracking-widest focus:ring-2 focus:ring-blue-500 focus:outline-none">
+          class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl text-center text-2xl tracking-widest bg-white dark:bg-gray-700 text-gray-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors">
       </div>
 
       <div class="flex gap-4 pt-2">
-        <button onclick="handlePunch('上班')" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-xl transition">
+        <button onclick="handlePunch('上班')" class="flex-1 bg-green-500 hover:bg-green-600 active:scale-95 text-white font-bold py-3.5 rounded-xl shadow-md transition transform">
           上班打卡
         </button>
-        <button onclick="handlePunch('下班')" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-xl transition">
+        <button onclick="handlePunch('下班')" class="flex-1 bg-blue-500 hover:bg-blue-600 active:scale-95 text-white font-bold py-3.5 rounded-xl shadow-md transition transform">
           下班打卡
         </button>
       </div>
     </div>
 
-    <!-- 訊息提示 -->
-    <div id="message" class="mt-6 text-center text-sm font-medium"></div>
+    <!-- 訊息提示（相容舊有邏輯，改為簡化或同步顯示） -->
+    <div id="message" class="mt-4 text-center text-sm font-medium hidden"></div>
   </div>
 
 <script>
+    // ===== 0. 深色模式初始化與切換邏輯 =====
+    function initDarkMode() {
+      if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+        updateThemeIcon(true);
+      } else {
+        document.documentElement.classList.remove('dark');
+        updateThemeIcon(false);
+      }
+    }
+
+    function toggleDarkMode() {
+      if (document.documentElement.classList.contains('dark')) {
+        document.documentElement.classList.remove('dark');
+        localStorage.theme = 'light';
+        updateThemeIcon(false);
+      } else {
+        document.documentElement.classList.add('dark');
+        localStorage.theme = 'dark';
+        updateThemeIcon(true);
+      }
+    }
+
+    function updateThemeIcon(isDark) {
+      const icon = document.getElementById('themeIcon');
+      if (isDark) {
+        // 月亮圖示
+        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>';
+      } else {
+        // 太陽圖示
+        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>';
+      }
+    }
+
+    initDarkMode();
+
+    // ===== 即時時鐘與日期更新 =====
+    function updateClock() {
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      document.getElementById('liveClock').textContent = `${hours}:${minutes}:${seconds}`;
+
+      const options = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
+      document.getElementById('liveDate').textContent = now.toLocaleDateString('zh-TW', options);
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // ===== Toast 浮動訊息提示工具 =====
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      
+      let bgColor = type === 'success' ? 'bg-green-600 text-white' : 'bg-red-500 text-white';
+      
+      toast.className = `pointer-events-auto mx-auto mb-3 px-6 py-3 rounded-2xl shadow-xl text-center font-bold text-sm toast-animate ${bgColor}`;
+      toast.textContent = message;
+      
+      container.innerHTML = ''; // 清空舊的
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
     // ===== 1. 填入你的 Supabase 專案資訊 =====
     const SUPABASE_URL = 'https://klgubwkrkoeqnndowijj.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_zgTOZmoPRNhgm1ZFBdnD0w_GpqpLT0D'; 
     const sbSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // ===== 2. 設定店家座標與限制距離 (請換成你們店家的真實經緯度) =====
+    // ===== 2. 設定店家座標與限制距離 =====
     const STORE_LOCATION = {
         lat: 25.033000, 
         lng: 121.565400  
@@ -67,7 +171,7 @@
             const { data: employees, error } = await sbSupabase
                 .from('employees')
                 .select('name')
-                .order('name', { ascending: true }); // 依姓名排序
+                .order('name', { ascending: true });
 
             if (error) throw error;
 
@@ -109,20 +213,17 @@
 
       // 檢查是否選擇姓名
       if (!selectedName) {
-        msgDiv.textContent = '請先選擇您的姓名！';
-        msgDiv.className = 'mt-6 text-center text-sm font-medium text-red-500';
+        showToast('請先選擇您的姓名！', 'error');
         return;
       }
 
       // 檢查 PIN 碼長度
       if (pin.length !== 4) {
-        msgDiv.textContent = '請輸入正確的 4 位數 PIN 碼！';
-        msgDiv.className = 'mt-6 text-center text-sm font-medium text-red-500';
+        showToast('請輸入正確的 4 位數 PIN 碼！', 'error');
         return;
       }
 
-      msgDiv.textContent = '正在確認您的 GPS 位置與打卡權限...';
-      msgDiv.className = 'mt-6 text-center text-sm font-medium text-gray-500';
+      showToast('正在確認您的 GPS 位置與打卡權限...', 'success');
 
       try {
         // 5. 取得手機當前 GPS 座標
@@ -141,16 +242,14 @@
         const userLat = position.coords.latitude;
         const userLng = position.coords.longitude;
 
-        // 6. 計算與店家的距離
-        const distance = calculateDistance(userLat, userLng, STORE_LOCATION.lat, STORE_Location = STORE_LOCATION.lng);
+        // 6. 計算與店家的距離（修正了原本變數拼寫錯誤）
+        const distance = calculateDistance(userLat, userLng, STORE_LOCATION.lat, STORE_LOCATION.lng);
         console.log(`目前距離店面: ${Math.round(distance)} 公尺`);
 
-        // 7. 檢查是否超出 50 公尺範圍
+        // 7. 檢查距離範圍
         if (distance > MAX_DISTANCE) {
             throw new Error(`打卡失敗！您目前距離店面約 ${Math.round(distance)} 公尺，須在 ${MAX_DISTANCE} 公尺內才能打卡。`);
         }
-
-        msgDiv.textContent = '驗證員工身分中...';
 
         // 8. 驗證選擇的名字與 PIN 碼是否正確相符
         const { data: employee, error: empError } = await sbSupabase
@@ -176,8 +275,7 @@
 
         if (punchError) throw punchError;
 
-        msgDiv.textContent = `🎉 ${employee.name} - ${type}打卡成功！`;
-        msgDiv.className = 'mt-6 text-center text-sm font-medium text-green-600';
+        showToast(`🎉 ${employee.name} - ${type}打卡成功！`, 'success');
         document.getElementById('pinInput').value = '';
         document.getElementById('employeeSelect').value = ''; // 重設下拉選單
 
@@ -187,8 +285,7 @@
         if (err.code === 2) errorMsg = '無法取得您的位置，請確認手機 GPS 是否開啟。';
         if (err.code === 3) errorMsg = '取得定位逾時，請至收訊良好的地方再試一次。';
 
-        msgDiv.textContent = errorMsg;
-        msgDiv.className = 'mt-6 text-center text-sm font-medium text-red-500';
+        showToast(errorMsg, 'error');
       }
     }
 
