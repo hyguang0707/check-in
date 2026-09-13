@@ -279,7 +279,7 @@
       document.getElementById('currentMonthLabel').textContent = `${currentYear}年 ${currentMonth + 1}月`;
 
       // 1. 查詢該員工在 employees 表格中設定的上班時間 (shift_start)
-      let shiftStartHour = 9;
+      let shiftStartHour = 16;
       let shiftStartMinute = 0;
 
       const { data: empData, error: empError } = await sbSupabase
