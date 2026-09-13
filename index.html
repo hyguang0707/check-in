@@ -279,6 +279,483 @@
 
       document.getElementById('currentMonthLabel').textContent = `${currentYear}年 ${currentMonth + 1}月`;
 
+      // 1. 先去查詢該員工在 employees 表格中設定的上班時間 (shift_start)
+      let shiftStartHour = 9;
+      let shiftStartMinute = 0;
+
+      const { data: empData, error: empError } = await sbSupabase
+        .from('employees')
+        .select('shift_start')
+        .eq('name', employeeName)
+        .single();
+
+      if (!empError && empData && empData.shift_start) {
+        // 假設資料庫存的格式是 "04:00" 或 "04:00:00"
+        const parts = empData.shift_start.split(':');
+        if (parts.length >= 2) {
+          shiftStartHour = parseInt(parts[0], 10);
+          shiftStartMinute = parseInt(parts[1], 10);
+        }
+      }
+
+      // 2. 定義當月的開始與結束時間 (ISO 格式) 用於資料庫查詢
+      const firstDayOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
+      const firstDayOfNextMonth = new Date(currentYear, currentMonth + 1, 1).toISOString();
+
+      // 3. 向 Supabase 查詢該員工當月的所有打卡紀錄
+      const { data: logs, error } = await sbSupabase
+        .from('punch_logs')
+        .select('created_at, action_type')
+        .eq('employee_name', employeeName)
+        .gte('created_at', firstDayOfMonth)
+        .lt('created_at', firstDayOfNextMonth);
+
+      if (error) {
+        console.error('抓取資料失敗:', error);
+        grid.innerHTML = '<div class="col-span-7 py-4 text-center text-red-500">資料讀取失敗，請稍後再試</div>';
+        return;
+      }
+
+      // 4. 整理打卡紀錄：找出每一天「最早的上班時間」與「最晚的下班時間」
+      const attendanceData = {};
+      logs.forEach(log => {
+        const logDate = new Date(log.created_at);
+        const day = logDate.getDate(); // 取得是幾號
+
+        if (!attendanceData[day]) {
+          attendanceData[day] = { inTime: null, outTime: null };
+        }
+
+        if (log.action_type === '上班') {
+          if (!attendanceData[day].inTime || logDate < attendanceData[day].inTime) {
+            attendanceData[day].inTime = logDate;
+          }
+        } else if (log.action_type === '下班') {
+          if (!attendanceData[day].outTime || logDate > attendanceData[day].outTime) {
+            attendanceData[day].outTime = logDate;
+          }
+        }
+      });
+
+      // 5. 判斷每日燈號 (綠、黃、紅)
+      const finalStatus = {};
+      
+      for (const day in attendanceData) {
+        const record = attendanceData[day];
+        
+        if (record.inTime) {
+          const h = record.inTime.getHours();
+          const m = record.inTime.getMinutes();
+          
+          // 超過該員工設定的上班時間算遲到 (黃燈)
+          if (h > shiftStartHour || (h === shiftStartHour && m > shiftStartMinute)) {
+            finalStatus[day] = 'yellow'; 
+          } else {
+            finalStatus[day] = 'green';  
+          }
+        } else if (record.outTime && !record.inTime) {
+          // 只有下班打卡，沒有上班打卡 (異常紅燈)
+          finalStatus[day] = 'red'; 
+        }
+      }
+
+      // 6. 開始渲染月曆 UI
+      grid.innerHTML = '';
+      
+      // 計算這個月第一天是星期幾，來補前面的空白格子 (0是星期日)
+      const firstDayOfWeek = new Date(currentYear, currentMonth, 1).getDay();
+      for (let i = 0; i < firstDayOfWeek; i++) {
+        grid.appendChild(document.createElement('div'));
+      }
+
+      // 計算這個月總共有幾天
+      const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+      // 生成每一天的格子
+      for (let day = 1; day <= daysInMonth; day++) {
+        const cell = document.createElement('div');
+        cell.className = 'py-2 rounded-xl flex flex-col items-center justify-center font-bold text-xs relative ';
+        
+        let statusHtml = '';
+
+        // 判斷條件：
+        // 1. 若為未來日期 (day > todayDate) -> 保持空白，不加顏色點
+        // 2. 若為過去或今天，但沒有打卡紀錄 (finalStatus[day] 不存在) -> 保持空白，代表休假或未上班
+        if (day > todayDate) {
+          cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-400', 'opacity-60');
+          statusHtml = `<span class="text-[9px] text-transparent mt-1">-</span>`;
+        } else {
+          const status = finalStatus[day];
+
+          if (status === 'green') {
+            cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
+            statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-green-500 mt-1" title="準時上班"></span>`;
+          } else if (status === 'yellow') {
+            cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
+            statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1" title="遲到"></span>`;
+          } else if (status === 'red') {
+            cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
+            statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-red-400 mt-1" title="異常/缺卡"></span>`;
+          } else {
+            // 沒有打卡紀錄（代表當天放假或未上班），完全保持乾淨空白
+            cell.classList.add('bg-gray-50', 'dark:bg-gray-800/60', 'text-gray-400', 'dark:text-gray-500');
+            statusHtml = `<span class="text-[9px] text-transparent mt-1">-</span>`;
+          }
+        }
+
+        cell.innerHTML = `<span>${day}</span>${statusHtml}`;
+        grid.appendChild(cell);
+      }
+    }
+
+    // 送出補登申請
+    function submitApplyForm() {
+      const name = document.getElementById('applyNameDisplay').value;
+      const date = document.getElementById('applyDate').value;
+      const type = document.getElementById('applyType').value;
+      const reason = document.getElementById('applyReason').value.trim();
+
+      if (!reason) {
+        showToast('請填寫原因說明！', 'error');
+        return;
+      }
+
+      closeApplyModal();
+      showToast(`✨ ${name} 的「${type}」申請已送出！`, 'success');
+      document.getElementById('applyReason').value = '';
+    }
+
+    // ===== Supabase 與打卡核心邏輯 =====
+    const SUPABASE_URL = 'https://klgubwkrkoeqnndowijj.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_zgTOZmoPRNhgm1ZFBdnD0w_GpqpLT0D'; 
+    const sbSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const STORE_LOCATION = { lat: 25.033000, lng: 121.565400 };
+    const MAX_DISTANCE = 75;
+
+    async function loadEmployees() {
+        const selectElement = document.getElementById('employeeSelect');
+        try {
+            const { data: employees, error } = await sbSupabase
+                .from('employees')
+                .select('name')
+                .order('name', { ascending: true });
+            if (error) throw error;
+            selectElement.innerHTML = '<option value="">-- 請點擊選擇姓名 --</option>';
+            employees.forEach(emp => {
+                const option = document.createElement('option');
+                option.value = emp.name;
+                option.textContent = emp.name;
+                selectElement.appendChild(option);
+            });
+        } catch (err) {
+            console.error('載入員工名單失敗：', err);
+            selectElement.innerHTML = '<option value="">載入失敗，請重新整理網頁</option>';
+        }
+    }
+    window.addEventListener('DOMContentLoaded', loadEmployees);
+
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371e3; 
+        const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
+        const Δφ = (lat2 - lat1) * Math.PI / 180, Δλ = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    }
+
+    async function handlePunch(type) {
+      const selectedName = document.getElementById('employeeSelect').value;
+      const pin = document.getElementById('pinInput').value.trim();
+
+      if (!selectedName) { showToast('請先選擇您的姓名！', 'error'); return; }
+      if (pin.length !== 4) { showToast('請輸入正確的 4 位數 PIN 碼！', 'error'); return; }
+
+      showToast('正在確認您的 GPS 位置與打卡權限...', 'success');
+
+      try {
+        const position = await new Promise((resolve, reject) => {
+            if (!navigator.geolocation) { reject(new Error('您的瀏覽器不支援地理定位。')); return; }
+            navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+        });
+
+        const distance = calculateDistance(position.coords.latitude, position.coords.longitude, STORE_LOCATION.lat, STORE_LOCATION.lng);
+        if (distance > MAX_DISTANCE) {
+            throw new Error(`打卡失敗！距離店面約 ${Math.round(distance)} 公尺（須在心電感應的範圍內）。`);
+        }
+
+        const { data: employee, error: empError } = await sbSupabase
+          .from('employees').select('name').eq('name', selectedName).eq('pin_code', pin).single();
+
+        if (empError || !employee) throw new Error('PIN 碼錯誤，請確認密碼是否正確。');
+
+        const { error: punchError } = await sbSupabase.from('punch_logs').insert([{ employee_name: employee.name, action_type: type }]);
+        if (punchError) throw punchError;
+
+        showToast(`🎉 ${employee.name} - ${type}打卡成功！`, 'success');
+        document.getElementById('pinInput').value = '';
+        document.getElementById('employeeSelect').value = '';
+
+      } catch (err) {
+        let errorMsg = err.message;
+        if (err.code === 1) errorMsg = '您拒絕了定位權限。';
+        if (err.code === 2) errorMsg = '無法取得位置，請確認 GPS 開啟。';
+        if (err.code === 3) errorMsg = '取得定位逾時。';
+        showToast(errorMsg, 'error');
+      }
+    }
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/check-in/sw.js').catch(() => {});
+      });
+    }
+</script>
+</body>
+</html><body class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center min-h-screen transition-colors duration-300 py-6">
+
+  <!-- Toast 訊息提示容器 -->
+  <div id="toastContainer" class="fixed top-5 left-1/2 transform -translate-x-1/2 z-50 w-11/12 max-w-md pointer-events-none"></div>
+
+  <div class="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl w-full max-w-md mx-4 transition-colors duration-300 relative">
+    
+    <!-- 右上角：深色模式切換按鈕 -->
+    <button onclick="toggleDarkMode()" class="absolute top-6 right-6 p-2 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-yellow-400 hover:scale-110 transition-transform shadow-sm" title="切換深色模式">
+      <svg id="themeIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+      </svg>
+    </button>
+
+    <!-- 頂部：極簡大時鐘儀表板 -->
+    <div class="text-center mb-6 pt-2">
+      <div id="liveClock" class="text-3xl font-black tracking-wider text-gray-800 dark:text-gray-100 mb-1">00:00:00</div>
+      <div id="liveDate" class="text-xs font-medium text-gray-400 dark:text-gray-500">載入日期中...</div>
+    </div>
+
+    <h1 class="text-xl font-bold text-center text-gray-800 dark:text-white mb-6">員工打卡系統</h1>
+    
+    <!-- 打卡表單 -->
+    <div class="space-y-4">
+      <!-- 員工姓名下拉選單 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">請選擇您的姓名</label>
+        <select id="employeeSelect" 
+          class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl text-center text-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors">
+          <option value="">載入員工名單中...</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">請輸入 4 位數 PIN 碼</label>
+        <input type="password" id="pinInput" maxlength="4" placeholder="例如: 0520" 
+          class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl text-center text-2xl tracking-widest bg-white dark:bg-gray-700 text-gray-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors">
+      </div>
+
+      <div class="flex gap-4 pt-2">
+        <button onclick="handlePunch('上班')" class="flex-1 bg-green-500 hover:bg-green-600 active:scale-95 text-white font-bold py-3.5 rounded-xl shadow-md transition transform">
+          上班打卡
+        </button>
+        <button onclick="handlePunch('下班')" class="flex-1 bg-blue-500 hover:bg-blue-600 active:scale-95 text-white font-bold py-3.5 rounded-xl shadow-md transition transform">
+          下班打卡
+        </button>
+      </div>
+
+      <!-- 新增功能入口按鈕（月曆檢視 & 補登申請） -->
+      <div class="flex gap-3 pt-2 border-t border-gray-100 dark:border-gray-700 mt-4">
+        <button onclick="openCalendarModal()" class="flex-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs font-bold py-2.5 rounded-xl transition flex items-center justify-center gap-1">
+          📅 我的出勤月曆
+        </button>
+        <button onclick="openApplyModal()" class="flex-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs font-bold py-2.5 rounded-xl transition flex items-center justify-center gap-1">
+          📝 補登／異常申請
+        </button>
+      </div>
+    </div>
+
+    <!-- 訊息提示容器（隱藏相容） -->
+    <div id="message" class="mt-4 text-center text-sm font-medium hidden"></div>
+  </div>
+
+  <!-- ================= 視窗 1：個人出勤月曆 Modal ================= -->
+  <div id="calendarModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center hidden px-4">
+    <div class="bg-white dark:bg-gray-800 w-full max-w-lg rounded-3xl p-6 shadow-2xl modal-animate border border-gray-100 dark:border-gray-700">
+      <div class="flex justify-between items-center mb-4">
+        <h3 id="calendarModalTitle" class="text-lg font-bold text-gray-800 dark:text-white">📅 個人出勤月曆檢視</h3>
+        <button onclick="closeCalendarModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl font-bold px-2">&times;</button>
+      </div>
+      <div class="text-xs text-gray-500 dark:text-gray-400 mb-4">
+        提示：未打卡（休假日）或未來日期將保持空白，讓出勤狀態更清晰。
+      </div>
+      <!-- 月曆介面 -->
+      <div class="bg-gray-50 dark:bg-gray-900 p-4 rounded-2xl">
+        <div class="flex justify-between items-center mb-3 font-bold text-gray-700 dark:text-gray-200">
+          <span id="currentMonthLabel">載入中...</span>
+          <span class="text-xs bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300 px-2.5 py-1 rounded-full">雲端即時同步</span>
+        </div>
+        <!-- 星期標題 -->
+        <div class="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-gray-400 mb-2">
+          <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+        </div>
+        <!-- 日期格子 -->
+        <div id="calendarGrid" class="grid grid-cols-7 gap-1.5 text-center text-xs">
+          <!-- 動態生成格子 -->
+        </div>
+      </div>
+      <div class="flex gap-2 mt-4 text-xs text-gray-500 dark:text-gray-400 justify-center">
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span> 準時上班</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block"></span> 遲到</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span> 異常/缺卡</span>
+      </div>
+      <div class="mt-5 text-right">
+        <button onclick="closeCalendarModal()" class="bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 text-gray-800 dark:text-white px-5 py-2 rounded-xl text-sm font-bold transition">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 視窗 2：打卡補登／異常申請單 Modal ================= -->
+  <div id="applyModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center hidden px-4">
+    <div class="bg-white dark:bg-gray-800 w-full max-w-md rounded-3xl p-6 shadow-2xl modal-animate border border-gray-100 dark:border-gray-700">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-bold text-gray-800 dark:text-white">📝 打卡補登／異常申請</h3>
+        <button onclick="closeApplyModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl font-bold px-2">&times;</button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">申請人</label>
+          <input type="text" id="applyNameDisplay" readonly placeholder="請先從主畫面選擇姓名" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">異常日期</label>
+          <input type="date" id="applyDate" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-800 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">補登類型</label>
+          <select id="applyType" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-800 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            <option value="補上班打卡">補上班打卡</option>
+            <option value="補下班打卡">補下班打卡</option>
+            <option value="忘記帶手機/GPS失效">忘記帶手機 / GPS 失效</option>
+            <option value="公出／外修">公出／外修</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">原因說明</label>
+          <textarea id="applyReason" rows="3" placeholder="請簡述原因（例如：手機沒電、系統定位錯誤等）" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-800 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+        </div>
+      </div>
+      <div class="flex gap-3 mt-6">
+        <button onclick="closeApplyModal()" class="flex-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 text-gray-700 dark:text-gray-300 py-2.5 rounded-xl text-sm font-bold transition">取消</button>
+        <button onclick="submitApplyForm()" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white py-2.5 rounded-xl text-sm font-bold transition shadow-md">送出申請</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+    // ===== 深色模式邏輯 =====
+    function initDarkMode() {
+      if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+        updateThemeIcon(true);
+      } else {
+        document.documentElement.classList.remove('dark');
+        updateThemeIcon(false);
+      }
+    }
+
+    function toggleDarkMode() {
+      if (document.documentElement.classList.contains('dark')) {
+        document.documentElement.classList.remove('dark');
+        localStorage.theme = 'light';
+        updateThemeIcon(false);
+      } else {
+        document.documentElement.classList.add('dark');
+        localStorage.theme = 'dark';
+        updateThemeIcon(true);
+      }
+    }
+
+    function updateThemeIcon(isDark) {
+      const icon = document.getElementById('themeIcon');
+      if (isDark) {
+        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>';
+      } else {
+        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>';
+      }
+    }
+    initDarkMode();
+
+    // ===== 即時時鐘與日期 =====
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('liveClock').textContent = String(now.getHours()).padStart(2, '0') + ':' + 
+                                                        String(now.getMinutes()).padStart(2, '0') + ':' + 
+                                                        String(now.getSeconds()).padStart(2, '0');
+      document.getElementById('liveDate').textContent = now.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // ===== Toast 提示 =====
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      let bgColor = type === 'success' ? 'bg-green-600 text-white' : 'bg-red-500 text-white';
+      toast.className = `pointer-events-auto mx-auto mb-3 px-6 py-3 rounded-2xl shadow-xl text-center font-bold text-sm toast-animate ${bgColor}`;
+      toast.textContent = message;
+      container.innerHTML = '';
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    // ===== Modal 控制函式 (已修改為非同步) =====
+    async function openCalendarModal() {
+      const selectedName = document.getElementById('employeeSelect').value;
+      if (!selectedName) {
+        showToast('請先在畫面上選擇您的姓名！', 'error');
+        return;
+      }
+      
+      document.getElementById('calendarModalTitle').textContent = `📅 ${selectedName} 的出勤月曆`;
+      document.getElementById('calendarModal').classList.remove('hidden');
+      
+      // 顯示讀取中提示
+      const grid = document.getElementById('calendarGrid');
+      grid.innerHTML = '<div class="col-span-7 py-6 text-center text-gray-500 font-bold">正在從雲端讀取出勤紀錄...</div>';
+
+      // 呼叫抓取雲端資料與生成月曆的函式
+      await generateCalendar(selectedName);
+    }
+
+    function closeCalendarModal() {
+      document.getElementById('calendarModal').classList.add('hidden');
+    }
+
+    function openApplyModal() {
+      const selectedName = document.getElementById('employeeSelect').value;
+      if (!selectedName) {
+        showToast('請先在畫面上選擇您的姓名！', 'error');
+        return;
+      }
+      document.getElementById('applyNameDisplay').value = selectedName;
+      document.getElementById('applyDate').valueAsDate = new Date();
+      document.getElementById('applyModal').classList.remove('hidden');
+    }
+    function closeApplyModal() {
+      document.getElementById('applyModal').classList.add('hidden');
+    }
+
+    // 產生真實雲端資料月曆
+    async function generateCalendar(employeeName) {
+      const grid = document.getElementById('calendarGrid');
+      
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth(); // 0-11
+      const todayDate = now.getDate(); // 今天幾號
+
+      document.getElementById('currentMonthLabel').textContent = `${currentYear}年 ${currentMonth + 1}月`;
+
       // 1. 定義當月的開始與結束時間 (ISO 格式) 用於資料庫查詢
       const firstDayOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
       const firstDayOfNextMonth = new Date(currentYear, currentMonth + 1, 1).toISOString();
