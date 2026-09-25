@@ -278,22 +278,26 @@
 
       document.getElementById('currentMonthLabel').textContent = `${currentYear}年 ${currentMonth + 1}月`;
 
-      // 1. 查詢該員工在 employees 表格中設定的上班時間 (shift_start)
-      let shiftStartHour = 16;
+      // 1. 查詢該員工在 employees 表格中設定的上班時間 (shift_start) - 加入容錯保護
+      let shiftStartHour = 9;   // 預設為 9 點
       let shiftStartMinute = 0;
 
-      const { data: empData, error: empError } = await sbSupabase
-        .from('employees')
-        .select('shift_start')
-        .eq('name', employeeName)
-        .single();
+      try {
+        const { data: empData, error: empError } = await sbSupabase
+          .from('employees')
+          .select('shift_start')
+          .eq('name', employeeName)
+          .maybeSingle(); // 改用 maybeSingle 避免找不到資料時直接噴錯
 
-      if (!empError && empData && empData.shift_start) {
-        const parts = empData.shift_start.split(':');
-        if (parts.length >= 2) {
-          shiftStartHour = parseInt(parts[0], 10);
-          shiftStartMinute = parseInt(parts[1], 10);
+        if (!empError && empData && empData.shift_start) {
+          const parts = empData.shift_start.split(':');
+          if (parts.length >= 2) {
+            shiftStartHour = parseInt(parts[0], 10);
+            shiftStartMinute = parseInt(parts[1], 10);
+          }
         }
+      } catch (e) {
+        console.warn('未找到 shift_start 欄位或讀取失敗，使用預設值 09:00', e);
       }
 
       // 2. 定義當月的開始與結束時間
@@ -310,7 +314,7 @@
 
       if (error) {
         console.error('抓取資料失敗:', error);
-        grid.innerHTML = '<div class="col-span-7 py-4 text-center text-red-500">資料讀取失敗，請稍後再試</div>';
+        grid.innerHTML = '<div class="col-span-7 py-4 text-center text-red-500">資料讀取失敗，請檢查 Supabase 資料表設定</div>';
         return;
       }
 
