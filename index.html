@@ -270,8 +270,6 @@
     // 產生真實雲端資料月曆
     async function generateCalendar(employeeName) {
       const grid = document.getElementById('calendarGrid');
-      
-      // 【新增】一進來先顯示讀取中提示
       grid.innerHTML = '<div class="col-span-7 py-4 text-center text-gray-400 text-xs">正在從雲端讀取出勤紀錄...</div>';
 
       const now = new Date();
@@ -281,11 +279,12 @@
 
       document.getElementById('currentMonthLabel').textContent = `${currentYear}年 ${currentMonth + 1}月`;
 
-      // 1. 查詢該員工在 employees 表格中設定的上班時間 (shift_start)
       let shiftStartHour = 9;   
       let shiftStartMinute = 0;
+      let logs = [];
 
       try {
+        // 1. 查詢員工上班時間
         const { data: empData, error: empError } = await sbSupabase
           .from('employees')
           .select('shift_start')
@@ -299,60 +298,58 @@
             shiftStartMinute = parseInt(parts[1], 10);
           }
         }
+
+        // 2. 定義當月時間範圍
+        const firstDayOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
+        const firstDayOfNextMonth = new Date(currentYear, currentMonth + 1, 1).toISOString();
+
+        // 3. 查詢當月打卡紀錄（改用多次 .gte / .lt 串接，不使用 .and）
+        const { data: logsData, error: logsError } = await sbSupabase
+          .from('punch_logs')
+          .select('created_at, action_type')
+          .eq('employee_name', employeeName)
+          .gte('created_at', firstDayOfMonth)
+          .lt('created_at', firstDayOfNextMonth);
+
+        if (logsError) {
+          throw new Error(logsError.message);
+        }
+        logs = logsData || [];
+
       } catch (e) {
-        console.warn('未找到 shift_start 欄位，使用預設值 09:00', e);
-      }
-
-      // 2. 定義當月的開始與結束時間 (ISO 格式)
-      const firstDayOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
-      const firstDayOfNextMonth = new Date(currentYear, currentMonth + 1, 1).toISOString();
-
-      // 3. 查詢該員工當月的所有打卡紀錄
-      const { data: logs, error } = await sbSupabase
-        .from('punch_logs')
-        .select('created_at, action_type')
-        .eq('employee_name', employeeName)
-        .and(`created_at.gte.${firstDayOfMonth},created_at.lt.${firstDayOfNextMonth}`);
-
-      if (error) {
-        console.error('抓取資料失敗:', error);
-        grid.innerHTML = `<div class="col-span-7 py-4 text-center text-red-500 text-[10px]">錯誤：${error.message}</div>`;
+        console.error('讀取失敗:', e);
+        grid.innerHTML = `<div class="col-span-7 py-4 text-center text-red-500 text-[10px]">讀取失敗：${e.message}</div>`;
         return;
       }
 
       // 4. 整理打卡紀錄
       const attendanceData = {};
-      if (logs) {
-        logs.forEach(log => {
-          const logDate = new Date(log.created_at);
-          const day = logDate.getDate();
+      logs.forEach(log => {
+        const logDate = new Date(log.created_at);
+        const day = logDate.getDate();
 
-          if (!attendanceData[day]) {
-            attendanceData[day] = { inTime: null, outTime: null };
-          }
+        if (!attendanceData[day]) {
+          attendanceData[day] = { inTime: null, outTime: null };
+        }
 
-          if (log.action_type === '上班') {
-            if (!attendanceData[day].inTime || logDate < attendanceData[day].inTime) {
-              attendanceData[day].inTime = logDate;
-            }
-          } else if (log.action_type === '下班') {
-            if (!attendanceData[day].outTime || logDate > attendanceData[day].outTime) {
-              attendanceData[day].outTime = logDate;
-            }
+        if (log.action_type === '上班') {
+          if (!attendanceData[day].inTime || logDate < attendanceData[day].inTime) {
+            attendanceData[day].inTime = logDate;
           }
-        });
-      }
+        } else if (log.action_type === '下班') {
+          if (!attendanceData[day].outTime || logDate > attendanceData[day].outTime) {
+            attendanceData[day].outTime = logDate;
+          }
+        }
+      });
 
       // 5. 判斷每日燈號
       const finalStatus = {};
-      
       for (const day in attendanceData) {
         const record = attendanceData[day];
-        
         if (record.inTime) {
           const h = record.inTime.getHours();
           const m = record.inTime.getMinutes();
-          
           if (h > shiftStartHour || (h === shiftStartHour && m > shiftStartMinute)) {
             finalStatus[day] = 'yellow'; 
           } else {
@@ -363,28 +360,24 @@
         }
       }
 
-      // 6. 渲染月曆 UI (這會徹底清空原本的格子並重新填入當月日期與點燈)
+      // 6. 渲染月曆 UI
       grid.innerHTML = '';
-      
       const firstDayOfWeek = new Date(currentYear, currentMonth, 1).getDay();
       for (let i = 0; i < firstDayOfWeek; i++) {
         grid.appendChild(document.createElement('div'));
       }
 
       const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-
       for (let day = 1; day <= daysInMonth; day++) {
         const cell = document.createElement('div');
         cell.className = 'py-2 rounded-xl flex flex-col items-center justify-center font-bold text-xs relative ';
         
         let statusHtml = '';
-
         if (day > todayDate) {
           cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-400', 'opacity-60');
           statusHtml = `<span class="text-[9px] text-transparent mt-1">-</span>`;
         } else {
           const status = finalStatus[day];
-
           if (status === 'green') {
             cell.classList.add('bg-white', 'dark:bg-gray-800', 'text-gray-700', 'dark:text-gray-200', 'shadow-sm');
             statusHtml = `<span class="w-1.5 h-1.5 rounded-full bg-green-500 mt-1" title="準時上班"></span>`;
