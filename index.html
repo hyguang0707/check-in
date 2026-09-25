@@ -267,7 +267,7 @@
       document.getElementById('applyModal').classList.add('hidden');
     }
 
-    // 產生真實雲端資料月曆
+    // 產生真實雲端資料月曆（強制轉換台灣時區以確保準確判斷）
     async function generateCalendar(employeeName) {
       const grid = document.getElementById('calendarGrid');
       
@@ -279,7 +279,7 @@
       document.getElementById('currentMonthLabel').textContent = `${currentYear}年 ${currentMonth + 1}月`;
 
       // 1. 查詢該員工在 employees 表格中設定的上班時間 (shift_start)
-      let shiftStartHour = 16;
+      let shiftStartHour = 16; // 預設 16:00
       let shiftStartMinute = 0;
 
       const { data: empData, error: empError } = await sbSupabase
@@ -314,11 +314,18 @@
         return;
       }
 
-      // 4. 整理打卡紀錄
+      // 4. 整理打卡紀錄（強制使用台灣時區取得正確的小時與日期）
       const attendanceData = {};
       logs.forEach(log => {
-        const logDate = new Date(log.created_at);
+        const utcDate = new Date(log.created_at);
+        
+        // 透過強制轉換成台灣時區字串來解析正確的當地日期與時間
+        const twDateStr = utcDate.toLocaleString('en-US', { timeZone: 'Asia/Taipei' });
+        const logDate = new Date(twDateStr);
+
         const day = logDate.getDate();
+        const h = logDate.getHours();
+        const m = logDate.getMinutes();
 
         if (!attendanceData[day]) {
           attendanceData[day] = { inTime: null, outTime: null };
@@ -326,11 +333,11 @@
 
         if (log.action_type === '上班') {
           if (!attendanceData[day].inTime || logDate < attendanceData[day].inTime) {
-            attendanceData[day].inTime = logDate;
+            attendanceData[day].inTime = { hour: h, minute: m, fullDate: logDate };
           }
         } else if (log.action_type === '下班') {
           if (!attendanceData[day].outTime || logDate > attendanceData[day].outTime) {
-            attendanceData[day].outTime = logDate;
+            attendanceData[day].outTime = { hour: h, minute: m, fullDate: logDate };
           }
         }
       });
@@ -342,16 +349,16 @@
         const record = attendanceData[day];
         
         if (record.inTime) {
-          const h = record.inTime.getHours();
-          const m = record.inTime.getMinutes();
+          const h = record.inTime.hour;
+          const m = record.inTime.minute;
           
           if (h > shiftStartHour || (h === shiftStartHour && m > shiftStartMinute)) {
-            finalStatus[day] = 'yellow'; 
+            finalStatus[day] = 'yellow'; // 遲到
           } else {
-            finalStatus[day] = 'green';  
+            finalStatus[day] = 'green';  // 準時
           }
         } else if (record.outTime && !record.inTime) {
-          finalStatus[day] = 'red'; 
+          finalStatus[day] = 'red'; // 異常/缺卡
         }
       }
 
@@ -418,8 +425,8 @@
     const SUPABASE_ANON_KEY = 'sb_publishable_zgTOZmoPRNhgm1ZFBdnD0w_GpqpLT0D'; 
     const sbSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    const STORE_LOCATION = { lat:25.002246, lng:121.510530};
-    const MAX_DISTANCE = 180;
+    const STORE_LOCATION = { lat: 25.033000, lng: 121.565400 };
+    const MAX_DISTANCE = 4000;
 
     async function loadEmployees() {
         const selectElement = document.getElementById('employeeSelect');
