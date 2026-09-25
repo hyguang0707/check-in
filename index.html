@@ -271,6 +271,9 @@
     async function generateCalendar(employeeName) {
       const grid = document.getElementById('calendarGrid');
       
+      // 【新增】一進來先顯示讀取中提示
+      grid.innerHTML = '<div class="col-span-7 py-4 text-center text-gray-400 text-xs">正在從雲端讀取出勤紀錄...</div>';
+
       const now = new Date();
       const currentYear = now.getFullYear();
       const currentMonth = now.getMonth();
@@ -304,7 +307,7 @@
       const firstDayOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
       const firstDayOfNextMonth = new Date(currentYear, currentMonth + 1, 1).toISOString();
 
-      // 3. 查詢該員工當月的所有打卡紀錄（改用 .and() 避開 400 錯誤）
+      // 3. 查詢該員工當月的所有打卡紀錄
       const { data: logs, error } = await sbSupabase
         .from('punch_logs')
         .select('created_at, action_type')
@@ -319,24 +322,26 @@
 
       // 4. 整理打卡紀錄
       const attendanceData = {};
-      logs.forEach(log => {
-        const logDate = new Date(log.created_at);
-        const day = logDate.getDate();
+      if (logs) {
+        logs.forEach(log => {
+          const logDate = new Date(log.created_at);
+          const day = logDate.getDate();
 
-        if (!attendanceData[day]) {
-          attendanceData[day] = { inTime: null, outTime: null };
-        }
+          if (!attendanceData[day]) {
+            attendanceData[day] = { inTime: null, outTime: null };
+          }
 
-        if (log.action_type === '上班') {
-          if (!attendanceData[day].inTime || logDate < attendanceData[day].inTime) {
-            attendanceData[day].inTime = logDate;
+          if (log.action_type === '上班') {
+            if (!attendanceData[day].inTime || logDate < attendanceData[day].inTime) {
+              attendanceData[day].inTime = logDate;
+            }
+          } else if (log.action_type === '下班') {
+            if (!attendanceData[day].outTime || logDate > attendanceData[day].outTime) {
+              attendanceData[day].outTime = logDate;
+            }
           }
-        } else if (log.action_type === '下班') {
-          if (!attendanceData[day].outTime || logDate > attendanceData[day].outTime) {
-            attendanceData[day].outTime = logDate;
-          }
-        }
-      });
+        });
+      }
 
       // 5. 判斷每日燈號
       const finalStatus = {};
@@ -358,7 +363,7 @@
         }
       }
 
-      // 6. 渲染月曆 UI
+      // 6. 渲染月曆 UI (這會徹底清空原本的格子並重新填入當月日期與點燈)
       grid.innerHTML = '';
       
       const firstDayOfWeek = new Date(currentYear, currentMonth, 1).getDay();
