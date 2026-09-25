@@ -267,7 +267,7 @@
       document.getElementById('applyModal').classList.add('hidden');
     }
 
-    // 產生真實雲端資料月曆（強制轉換台灣時區以確保準確判斷）
+    // 產生真實雲端資料月曆
     async function generateCalendar(employeeName) {
       const grid = document.getElementById('calendarGrid');
       
@@ -279,7 +279,7 @@
       document.getElementById('currentMonthLabel').textContent = `${currentYear}年 ${currentMonth + 1}月`;
 
       // 1. 查詢該員工在 employees 表格中設定的上班時間 (shift_start)
-      let shiftStartHour = 16; // 預設 16:00
+      let shiftStartHour = 16;
       let shiftStartMinute = 0;
 
       const { data: empData, error: empError } = await sbSupabase
@@ -314,18 +314,11 @@
         return;
       }
 
-      // 4. 整理打卡紀錄（強制使用台灣時區取得正確的小時與日期）
+      // 4. 整理打卡紀錄
       const attendanceData = {};
       logs.forEach(log => {
-        const utcDate = new Date(log.created_at);
-        
-        // 透過強制轉換成台灣時區字串來解析正確的當地日期與時間
-        const twDateStr = utcDate.toLocaleString('en-US', { timeZone: 'Asia/Taipei' });
-        const logDate = new Date(twDateStr);
-
+        const logDate = new Date(log.created_at);
         const day = logDate.getDate();
-        const h = logDate.getHours();
-        const m = logDate.getMinutes();
 
         if (!attendanceData[day]) {
           attendanceData[day] = { inTime: null, outTime: null };
@@ -333,11 +326,11 @@
 
         if (log.action_type === '上班') {
           if (!attendanceData[day].inTime || logDate < attendanceData[day].inTime) {
-            attendanceData[day].inTime = { hour: h, minute: m, fullDate: logDate };
+            attendanceData[day].inTime = logDate;
           }
         } else if (log.action_type === '下班') {
           if (!attendanceData[day].outTime || logDate > attendanceData[day].outTime) {
-            attendanceData[day].outTime = { hour: h, minute: m, fullDate: logDate };
+            attendanceData[day].outTime = logDate;
           }
         }
       });
@@ -349,16 +342,16 @@
         const record = attendanceData[day];
         
         if (record.inTime) {
-          const h = record.inTime.hour;
-          const m = record.inTime.minute;
+          const h = record.inTime.getHours();
+          const m = record.inTime.getMinutes();
           
           if (h > shiftStartHour || (h === shiftStartHour && m > shiftStartMinute)) {
-            finalStatus[day] = 'yellow'; // 遲到
+            finalStatus[day] = 'yellow'; 
           } else {
-            finalStatus[day] = 'green';  // 準時
+            finalStatus[day] = 'green';  
           }
         } else if (record.outTime && !record.inTime) {
-          finalStatus[day] = 'red'; // 異常/缺卡
+          finalStatus[day] = 'red'; 
         }
       }
 
@@ -425,7 +418,7 @@
     const SUPABASE_ANON_KEY = 'sb_publishable_zgTOZmoPRNhgm1ZFBdnD0w_GpqpLT0D'; 
     const sbSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    const STORE_LOCATION = { lat: 25.033000, lng: 121.565400 };
+    const STORE_LOCATION = { lat:25.002246, lng:121.510530};
     const MAX_DISTANCE = 8000;
 
     async function loadEmployees() {
@@ -483,18 +476,7 @@
 
         if (empError || !employee) throw new Error('PIN 碼錯誤，請確認密碼是否正確。');
 
-        // ★ 關鍵修正：產生明確帶有台灣時區 (+08:00) 的 ISO 時間字串，讓 Google Sheets 與資料庫完美對應
-        const now = new Date();
-        const tzOffset = +8 * 60; // 台灣時區 +8 小時
-        const localTime = new Date(now.getTime() + (tzOffset - now.getTimezoneOffset()) * 60000);
-        const taiwanISOString = localTime.toISOString().replace('Z', '+08:00');
-
-        const { error: punchError } = await sbSupabase.from('punch_logs').insert([{ 
-          employee_name: employee.name, 
-          action_type: type,
-          created_at: taiwanISOString // 強制寫入台灣時間
-        }]);
-        
+        const { error: punchError } = await sbSupabase.from('punch_logs').insert([{ employee_name: employee.name, action_type: type }]);
         if (punchError) throw punchError;
 
         showToast(`🎉 ${employee.name} - ${type}打卡成功！`, 'success');
