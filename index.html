@@ -303,13 +303,13 @@
         const firstDayOfMonth = new Date(currentYear, currentMonth, 1).toISOString();
         const firstDayOfNextMonth = new Date(currentYear, currentMonth + 1, 1).toISOString();
 
-        // 3. 查詢當月打卡紀錄（改用多次 .gte / .lt 串接，不使用 .and）
+        // 3. 查詢當月打卡紀錄（使用正確的欄位 punch_time）
         const { data: logsData, error: logsError } = await sbSupabase
           .from('punch_logs')
-          .select('created_at, action_type')
+          .select('punch_time, action_type')
           .eq('employee_name', employeeName)
-          .gte('created_at', firstDayOfMonth)
-          .lt('created_at', firstDayOfNextMonth);
+          .gte('punch_time', firstDayOfMonth)
+          .lt('punch_time', firstDayOfNextMonth);
 
         if (logsError) {
           throw new Error(logsError.message);
@@ -325,7 +325,7 @@
       // 4. 整理打卡紀錄
       const attendanceData = {};
       logs.forEach(log => {
-        const logDate = new Date(log.created_at);
+        const logDate = new Date(log.punch_time);
         const day = logDate.getDate();
 
         if (!attendanceData[day]) {
