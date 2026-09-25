@@ -483,7 +483,18 @@
 
         if (empError || !employee) throw new Error('PIN 碼錯誤，請確認密碼是否正確。');
 
-        const { error: punchError } = await sbSupabase.from('punch_logs').insert([{ employee_name: employee.name, action_type: type }]);
+        // ★ 關鍵修正：產生明確帶有台灣時區 (+08:00) 的 ISO 時間字串，讓 Google Sheets 與資料庫完美對應
+        const now = new Date();
+        const tzOffset = +8 * 60; // 台灣時區 +8 小時
+        const localTime = new Date(now.getTime() + (tzOffset - now.getTimezoneOffset()) * 60000);
+        const taiwanISOString = localTime.toISOString().replace('Z', '+08:00');
+
+        const { error: punchError } = await sbSupabase.from('punch_logs').insert([{ 
+          employee_name: employee.name, 
+          action_type: type,
+          created_at: taiwanISOString // 強制寫入台灣時間
+        }]);
+        
         if (punchError) throw punchError;
 
         showToast(`🎉 ${employee.name} - ${type}打卡成功！`, 'success');
